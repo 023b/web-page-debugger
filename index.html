@@ -1,0 +1,138 @@
+import requests
+from bs4 import BeautifulSoup
+import re
+from urllib.parse import urlparse
+import webbrowser
+import os
+
+# Function to fetch webpage content
+def fetch_page(url):
+    try:
+        response = requests.get(url)
+        response.raise_for_status()
+        return response.text
+    except requests.exceptions.RequestException as e:
+        print(f"Error fetching {url}: {e}")
+        return None
+
+# Function to classify and validate <div> issues
+def classify_div_issues(div):
+    issues = []
+    div_text = div.get_text(strip=True)
+    
+    # 1. Empty <div> check
+    if not div_text:
+        issues.append(("Empty <div> tag found.", "red"))
+    
+    # 2. Accessibility check: missing role or aria attributes
+    if div.get('role') is None and (div_text.lower().startswith("click") or "button" in div_text.lower()):
+        issues.append(("Potential accessibility issue: Consider adding 'role' or 'aria' attributes.", "orange"))
+    
+    # 3. Inline styles check
+    if div.get('style'):
+        issues.append(("Inline styles detected. Consider moving styles to CSS for better maintainability.", "blue"))
+    
+    # 4. Missing class/id for targeted styling or scripts
+    if not div.get('class') and not div.get('id'):
+        issues.append(("Missing class or id attribute, which may limit CSS or JavaScript targeting.", "green"))
+    
+    # 5. Excessive nesting check (depth greater than 3)
+    nesting_level = 0
+    parent = div
+    while parent := parent.find_parent("div"):
+        nesting_level += 1
+    if nesting_level > 3:
+        issues.append(("Deeply nested <div> detected, consider restructuring for simplicity.", "purple"))
+    
+    return issues
+
+# Function to validate HTML and filter for divs with issues
+def validate_html_divs(html_content):
+    soup = BeautifulSoup(html_content, 'html.parser')
+    div_issues = []
+    
+    # Process each <div> and classify issues
+    for div in soup.find_all('div'):
+        issues = classify_div_issues(div)
+        if issues:
+            div_issues.append({"element": str(div), "issues": issues})
+    
+    return div_issues if div_issues else [{"status": "No significant issues in <div> elements"}]
+
+# Function to save report to an HTML file named after the URL and open it in the browser
+def save_report_as_html(report, url):
+    url_name = re.sub(r'\W+', '_', urlparse(url).netloc)
+    filename = f"{url_name}_report.html"
+    
+    # HTML report structure with CSS for color-coding
+    html_content = f"""
+    <html>
+        <head>
+            <title>Analysis Report for {url}</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; }}
+                .report-container {{ margin: 20px; }}
+                .issue-table {{ width: 100%; border-collapse: collapse; margin-top: 20px; }}
+                .issue-table th, .issue-table td {{ padding: 8px; text-align: left; border: 1px solid #ddd; }}
+                .issue-header {{ font-size: 1.5em; margin-top: 10px; }}
+                .red {{ color: red; font-weight: bold; }}
+                .orange {{ color: orange; font-weight: bold; }}
+                .blue {{ color: blue; font-weight: bold; }}
+                .green {{ color: green; font-weight: bold; }}
+                .purple {{ color: purple; font-weight: bold; }}
+            </style>
+        </head>
+        <body>
+            <div class="report-container">
+                <h1>Analysis Report for {url}</h1>
+    """
+
+    for div_issue in report:
+        element = div_issue.get("element", "N/A")
+        issues = div_issue.get("issues", [])
+        
+        html_content += f"""
+            <div class="issue-header">Div Element:</div>
+            <div>{element}</div>
+            <table class="issue-table">
+                <tr>
+                    <th>Issue</th>
+                    <th>Severity</th>
+                </tr>
+        """
+        
+        for issue, color in issues:
+            html_content += f"""
+                <tr>
+                    <td>{issue}</td>
+                    <td class="{color}">{color.capitalize()}</td>
+                </tr>
+            """
+        
+        html_content += "</table><br><br>"
+
+    html_content += "</div></body></html>"
+
+    with open(filename, 'w') as html_file:
+        html_file.write(html_content)
+    
+    print(f"Report saved as {filename}")
+    
+    # Automatically open the report in the default web browser
+    webbrowser.open("file://" + os.path.abspath(filename))
+
+# Main function to process URL and generate report
+def analyze_website(url):
+    html_content = fetch_page(url)
+    if not html_content:
+        return {"status": "failed", "message": "Unable to fetch page content"}
+    
+    # Validate HTML <div> sections
+    div_issues = validate_html_divs(html_content)
+    
+    # Save report as HTML file and open it
+    save_report_as_html(div_issues, url)
+
+# Example usage
+url = "https://023b.github.io/profile/"
+analyze_website(url)
